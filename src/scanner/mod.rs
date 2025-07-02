@@ -90,6 +90,7 @@ impl<'a> Token<'a> {
 
 pub struct Scanner<'a> {
     source: &'a str,
+    chars: std::str::CharIndices<'a>,
     tokens: Vec<Token<'a>>,
 
     start: usize,
@@ -101,6 +102,7 @@ impl<'a> Scanner<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
             source,
+            chars: source.char_indices(),
             tokens: vec![],
             start: 0,
             current: 0,
@@ -123,20 +125,18 @@ impl<'a> Scanner<'a> {
 
     fn scan_token(&mut self) {
         let c = self.advance();
-        // FIXME:
-        let c = c.unwrap();
         match c {
-            '(' => self.add_token(TokenType::LeftParen),
-            ')' => self.add_token(TokenType::RightParen),
-            '{' => self.add_token(TokenType::LeftBrace),
-            '}' => self.add_token(TokenType::RightBrace),
-            ',' => self.add_token(TokenType::Comma),
-            '.' => self.add_token(TokenType::Dot),
-            '-' => self.add_token(TokenType::Minus),
-            '+' => self.add_token(TokenType::Plus),
-            ';' => self.add_token(TokenType::Semicolon),
-            '*' => self.add_token(TokenType::Star),
-            '!' => {
+            Some('(') => self.add_token(TokenType::LeftParen),
+            Some(')') => self.add_token(TokenType::RightParen),
+            Some('{') => self.add_token(TokenType::LeftBrace),
+            Some('}') => self.add_token(TokenType::RightBrace),
+            Some(',') => self.add_token(TokenType::Comma),
+            Some('.') => self.add_token(TokenType::Dot),
+            Some('-') => self.add_token(TokenType::Minus),
+            Some('+') => self.add_token(TokenType::Plus),
+            Some(';') => self.add_token(TokenType::Semicolon),
+            Some('*') => self.add_token(TokenType::Star),
+            Some('!') => {
                 let next_token = if self.is_match('=') {
                     TokenType::BangEqual
                 } else {
@@ -144,7 +144,7 @@ impl<'a> Scanner<'a> {
                 };
                 self.add_token(next_token);
             }
-            '=' => {
+            Some('=') => {
                 let next_token = if self.is_match('=') {
                     TokenType::EqualEqual
                 } else {
@@ -152,7 +152,7 @@ impl<'a> Scanner<'a> {
                 };
                 self.add_token(next_token);
             }
-            '<' => {
+            Some('<') => {
                 let next_token = if self.is_match('=') {
                     TokenType::LessEqual
                 } else {
@@ -160,7 +160,7 @@ impl<'a> Scanner<'a> {
                 };
                 self.add_token(next_token);
             }
-            '>' => {
+            Some('>') => {
                 let next_token = if self.is_match('=') {
                     TokenType::GreaterEqual
                 } else {
@@ -168,30 +168,33 @@ impl<'a> Scanner<'a> {
                 };
                 self.add_token(next_token);
             }
-            '/' => {
+            Some('/') => {
                 if self.is_match('/') {
-                    while let Some(ch) = self.peek() {
-                        if ch != '\n' {
-                            self.advance();
-                        }
+                    while self.peek().is_some_and(|ch| ch != '\n') {
+                        self.advance();
                     }
                 } else {
                     self.add_token(TokenType::Slash);
                 }
             }
-            ' ' | '\r' | '\t' => (),
-            '\n' => self.line += 1,
-            '\"' => self.string(),
-            c if c.is_digit(10) => self.number(),
-            c if c.is_ascii_alphabetic() || c == '_' => self.identifier(),
-            _ => eprintln!("Unexpected token!"),
+            Some(' ') | Some('\r') | Some('\t') => (),
+            Some('\n') => self.line += 1,
+            Some('\"') => self.string(),
+            Some(c) if c.is_ascii_digit() => self.number(),
+            Some(c) if c.is_ascii_alphabetic() || c == '_' => self.identifier(),
+            Some(unexpected) => eprintln!("Unexpected token: {unexpected}!"),
+            None => (),
         }
     }
 
     fn advance(&mut self) -> Option<char> {
-        let ch = self.source.chars().nth(self.current);
-        self.current += 1;
-        ch
+        match self.chars.next() {
+            Some((index, ch)) => {
+                self.current = index + 1;
+                Some(ch)
+            }
+            None => None,
+        }
     }
 
     fn peek(&self) -> Option<char> {
@@ -220,29 +223,19 @@ impl<'a> Scanner<'a> {
     }
 
     fn is_match(&mut self, expected: char) -> bool {
-        if self.is_at_end() {
-            return false;
-        }
-
-        match self.source.chars().nth(self.current) {
-            Some(c) => {
-                if c == expected {
-                    self.current += 1;
-                    true
-                } else {
-                    false
-                }
-            }
-            None => false,
+        matches!(self.chars.clone().next(), Some((_, ch)) if ch == expected) && {
+            self.consumed();
+            true
         }
     }
 
-    fn string(&mut self) {
-        while let Some(ch) = self.peek() {
-            if ch == '\"' {
-                break;
-            }
+    fn consumed(&mut self) {
+        self.current += 1;
+        self.chars.next();
+    }
 
+    fn string(&mut self) {
+        while self.peek().is_some_and(|ch| ch != '\"') {
             if let Some(ch) = self.peek() {
                 if ch == '\n' {
                     self.line += 1;
@@ -264,23 +257,15 @@ impl<'a> Scanner<'a> {
     }
 
     fn number(&mut self) {
-        while let Some(ch) = self.peek() {
-            if ch.is_digit(10) {
-                self.advance();
-            } else {
-                break;
-            }
+        while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+            self.advance();
         }
-        if self.peek().map(|v| v == '.').unwrap_or(false)
-            && self.peek_next().map(|v| v.is_digit(10)).unwrap_or(false)
+        if self.peek().is_some_and(|v| v == '.')
+            && self.peek_next().is_some_and(|v| v.is_ascii_digit())
         {
             self.advance();
-            while let Some(ch) = self.peek() {
-                if ch.is_digit(10) {
-                    self.advance();
-                } else {
-                    break;
-                }
+            while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                self.advance();
             }
         }
 
@@ -291,16 +276,14 @@ impl<'a> Scanner<'a> {
     }
 
     fn identifier(&mut self) {
-        while let Some(ch) = self.peek() {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
-                self.advance();
-            } else {
-                break;
-            }
+        while self
+            .peek()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            self.advance();
         }
 
         let text = &self.source[self.start..self.current];
-        // FIXME: Convert to hash map
         let token_type = match text {
             "and" => TokenType::And,
             "class" => TokenType::Class,
@@ -414,6 +397,23 @@ mod tests {
         assert_eq!(
             scanner.tokens,
             vec![Token::new(out, input, 1), Token::new(TokenType::Eof, "", 1)]
+        )
+    }
+
+    #[test]
+    fn var_definition() {
+        let input = "var input = 12";
+        let mut scanner = Scanner::new(&input);
+        scanner.scan_tokens();
+        assert_eq!(
+            scanner.tokens,
+            vec![
+                Token::new(TokenType::Var, "var", 1),
+                Token::new(TokenType::Identifier, "input", 1),
+                Token::new(TokenType::Equal, "=", 1),
+                Token::new_with_literal(TokenType::Number, "12", 1, Some(Literal::Number(12.0))),
+                Token::new(TokenType::Eof, "", 1)
+            ]
         )
     }
 }
