@@ -173,6 +173,23 @@ impl<'a> Scanner<'a> {
                     while self.peek().is_some_and(|ch| ch != '\n') {
                         self.advance();
                     }
+                } else if self.is_match('*') {
+                    loop {
+                        match self.advance() {
+                            Some(c) => {
+                                if c == '\n' {
+                                    self.line += 1;
+                                }
+                                if c == '*' && self.is_match('/') {
+                                    break;
+                                }
+                            }
+                            None => {
+                                eprint!("Unmatched comment.");
+                                break;
+                            }
+                        }
+                    }
                 } else {
                     self.add_token(TokenType::Slash);
                 }
@@ -413,6 +430,27 @@ mod tests {
                 Token::new(TokenType::Equal, "=", 1),
                 Token::new_with_literal(TokenType::Number, "12", 1, Some(Literal::Number(12.0))),
                 Token::new(TokenType::Eof, "", 1)
+            ]
+        )
+    }
+
+    #[test]
+    fn multiline_comment() {
+        let input = r#"/*khar
+gav
+*/
+var input = 12"#;
+
+        let mut scanner = Scanner::new(&input);
+        scanner.scan_tokens();
+        assert_eq!(
+            scanner.tokens,
+            vec![
+                Token::new(TokenType::Var, "var", 4),
+                Token::new(TokenType::Identifier, "input", 4),
+                Token::new(TokenType::Equal, "=", 4),
+                Token::new_with_literal(TokenType::Number, "12", 4, Some(Literal::Number(12.0))),
+                Token::new(TokenType::Eof, "", 4)
             ]
         )
     }
